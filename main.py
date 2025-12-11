@@ -11,7 +11,7 @@ from astrbot.api import logger
 from astrbot.api.event import filter
 from astrbot.api.star import Context, Star, StarTools, register
 from astrbot.core import AstrBotConfig
-from astrbot.core.message.components import Forward, Image, Node, Nodes, Record, Video
+from astrbot.core.message.components import At, Forward, Image, Node, Nodes, Record, Video
 from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 from .core.clean import CacheCleaner
@@ -124,9 +124,15 @@ class ParserPlugin(Star):
             return
 
         text = event.message_str
-
-        # 过滤空文本
         if not text:
+            return
+        chain = event.get_messages()
+        if not chain:
+            return
+
+        # 专门@其他bot的消息不解析
+        seg1 = chain[0]
+        if isinstance(seg1, At) and seg1.qq != event.get_self_id():
             return
 
         # 匹配 (关键词 + 正则双重判定)
@@ -159,7 +165,7 @@ class ParserPlugin(Star):
 
             # 检查是否最近解析过
             if link in session_history:
-                logger.debug(f"[防抖机制] 链接 {link} 在防抖时间内，跳过解析")
+                logger.warning(f"[防抖机制] 链接 {link} 在防抖时间内，跳过解析")
                 return
 
             # 更新缓存
@@ -171,12 +177,12 @@ class ParserPlugin(Star):
         if self.config["enable_tackle"]:
             if any(
                 isinstance(seg, Video | Record | Nodes | Node | Forward)
-                for seg in event.get_messages()
+                for seg in chain
             ):
                 old_task = self.running_tasks.pop(umo, None)
                 if old_task and not old_task.done():
                     old_task.cancel()
-                    logger.info(
+                    logger.warning(
                         f"[抢断机制] 检测到媒体消息，已取消会话 {umo} 的解析任务"
                     )
                 return
