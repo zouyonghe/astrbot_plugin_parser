@@ -3,8 +3,13 @@
 import asyncio
 import re
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from io import BytesIO
+from itertools import chain
 from pathlib import Path
+
+import aiofiles
 
 from astrbot.api import logger
 from astrbot.api.event import filter
@@ -17,6 +22,7 @@ from astrbot.core.message.components import (
     Image,
     Node,
     Nodes,
+    Plain,
     Record,
     Video,
 )
@@ -24,7 +30,18 @@ from astrbot.core.platform.astr_message_event import AstrMessageEvent
 
 from .core.clean import CacheCleaner
 from .core.download import Downloader
-from .core.parsers import BaseParser, BilibiliParser, YouTubeParser
+from .core.exception import DownloadException, DownloadLimitException, ZeroSizeException
+from .core.parsers import (
+    AudioContent,
+    BaseParser,
+    BilibiliParser,
+    DynamicContent,
+    GraphicsContent,
+    ImageContent,
+    ParseResult,
+    VideoContent,
+    YouTubeParser,
+)
 from .core.render import CommonRenderer
 from .core.utils import save_cookies_with_netscape
 
@@ -122,6 +139,64 @@ class ParserPlugin(Star):
                 return parser
         raise ValueError(f"未找到类型为 {parser_type} 的 parser 实例")
 
+    async def make_messages(self, result: ParseResult) -> list[BaseMessageComponent]:
+        """组装消息"""
+        segs: list[BaseMessageComponent] = []
+
+        # 1.获取媒体内容
+        failed = 0
+
+        for cont in chain(
+            result.contents, result.repost.contents if result.repost else ()
+        ):
+            try:
+                path = await cont.get_path()
+            except (DownloadLimitException, ZeroSizeException):
+                continue  # 预期异常，不抛出
+            except DownloadException:
+                failed += 1
+                continue
+
+            match cont:
+                case VideoContent() | DynamicContent():
+                    segs.append(Video(str(path)))
+                case AudioContent():
+                    segs.append(Record(str(path)))
+                case ImageContent():
+                    segs.append(Image(str(path)))
+                case GraphicsContent() as g:
+                    segs.append(Image(str(path)))
+                    if g.text:
+                        segs.append(Plain(g.text))
+                    if g.alt:
+                        segs.append(Plain(g.alt))
+
+        # 2. 生成帖子卡片
+        need_card = not self.config["simple_mode"] or not segs
+        if need_card and result.render_image is None:
+            cache_key = uuid.uuid4().hex
+            cache_file = self.cache_dir / f"card_{cache_key}.png"
+            try:
+                image = await self.renderer.create_card_image(result)
+                output = BytesIO()
+                await asyncio.to_thread(image.save, output, format="PNG")
+                async with aiofiles.open(cache_file, "wb+") as f:
+                    await f.write(output.getvalue())
+                result.render_image = cache_file
+            except Exception:
+                result.render_image = None
+
+        # 3.插入卡片
+        if result.render_image is not None:
+            card_seg = Image(str(result.render_image))
+            segs.insert(0, card_seg)
+
+        # 4. 下载失败提示
+        if failed:
+            segs.append(Plain(f"{failed} 项媒体下载失败"))
+
+        return segs
+
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
         """消息的统一入口"""
@@ -139,8 +214,9 @@ class ParserPlugin(Star):
             return
 
         # 专门@其他bot的消息不解析
+        self_id = event.get_self_id()
         seg1 = chain[0]
-        if isinstance(seg1, At) and seg1.qq != event.get_self_id():
+        if isinstance(seg1, At) and str(seg1.qq) != self_id:
             return
 
         # 匹配 (关键词 + 正则双重判定)
@@ -192,7 +268,7 @@ class ParserPlugin(Star):
 
         async def job() -> list[BaseMessageComponent]:
             parse_res = await self.parser_map[keyword].parse(keyword, searched)  # 解析
-            return await self.renderer.render_messages(parse_res) # 渲染
+            return await self.make_messages(parse_res) # 渲染
 
         # 任务
         task = asyncio.create_task(job())
@@ -208,8 +284,9 @@ class ParserPlugin(Star):
         # 合并转发
         if len(segs) >= self.config["forward_threshold"]:
             nodes = Nodes([])
+            name = "解析器"
             for seg in segs:
-                node = Node(uin="10000", name="解析器", content=[seg])
+                node = Node(uin=self_id, name=name, content=[seg])
                 nodes.nodes.append(node)
             segs.clear()
             segs.append(nodes)

@@ -1,37 +1,18 @@
-import uuid
-from asyncio import to_thread
+
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import lru_cache, wraps
-from io import BytesIO
-from itertools import chain
 from pathlib import Path
 from typing import ClassVar, ParamSpec, TypeVar
 
-import aiofiles
 from apilmoji import Apilmoji, EmojiCDNSource
 from apilmoji.core import get_font_height
 from PIL import Image, ImageDraw, ImageFont
 
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
-from astrbot.core.message.components import (
-    BaseMessageComponent,
-    Plain,
-    Record,
-    Video,
-)
-from astrbot.core.message.components import Image as AstrImage
 
-from .exception import DownloadException, DownloadLimitException, ZeroSizeException
-from .parsers import (
-    AudioContent,
-    DynamicContent,
-    GraphicsContent,
-    ImageContent,
-    ParseResult,
-    VideoContent,
-)
+from .parsers import GraphicsContent, ParseResult
 
 # 定义类型变量
 P = ParamSpec("P")
@@ -369,64 +350,6 @@ class CommonRenderer:
                 with Image.open(logo_path) as img:
                     cls.platform_logos[str(platform_name)] = img.convert("RGBA")
 
-    async def render_messages(self, result: ParseResult) -> list[BaseMessageComponent]:
-        """渲染消息"""
-        segs: list[BaseMessageComponent] = []
-
-        # 1.获取媒体内容
-        failed = 0
-
-        for cont in chain(
-            result.contents, result.repost.contents if result.repost else ()
-        ):
-            try:
-                path = await cont.get_path()
-            except (DownloadLimitException, ZeroSizeException):
-                continue  # 预期异常，不抛出
-            except DownloadException:
-                failed += 1
-                continue
-
-            match cont:
-                case VideoContent() | DynamicContent():
-                    segs.append(Video(str(path)))
-                case AudioContent():
-                    segs.append(Record(str(path)))
-                case ImageContent():
-                    segs.append(AstrImage(str(path)))
-                case GraphicsContent() as g:
-                    segs.append(AstrImage(str(path)))
-                    if g.text:
-                        segs.append(Plain(g.text))
-                    if g.alt:
-                        segs.append(Plain(g.alt))
-
-        # 2. 生成帖子卡片
-        need_card = not self.config["simple_mode"] or not segs
-        if need_card and result.render_image is None:
-            cache_key = uuid.uuid4().hex
-            cache_file = self.cache_dir / f"card_{cache_key}.png"
-            try:
-                image = await self._create_card_image(result)
-                output = BytesIO()
-                await to_thread(image.save, output, format="PNG")
-                async with aiofiles.open(cache_file, "wb+") as f:
-                    await f.write(output.getvalue())
-                result.render_image = cache_file
-            except Exception:
-                result.render_image = None
-
-        # 3.插入卡片
-        if result.render_image is not None:
-            card_seg = AstrImage(str(result.render_image))
-            segs.insert(0, card_seg)
-
-        # 4. 下载失败提示
-        if failed:
-            segs.append(Plain(f"{failed} 项媒体下载失败"))
-
-        return segs
-
     async def text(
         self,
         ctx: RenderContext,
@@ -447,12 +370,12 @@ class CommonRenderer:
         )
         return font.line_height * len(lines)
 
-    async def _create_card_image(
+    async def create_card_image(
         self,
         result: ParseResult,
         not_repost: bool = True,
     ) -> PILImage:
-        """创建卡片图片（内部方法，用于递归调用）
+        """创建卡片图片（用于递归调用）
 
         Args:
             result: 解析结果
@@ -760,7 +683,7 @@ class CommonRenderer:
 
     async def _calculate_repost_section(self, repost: ParseResult) -> RepostSectionData:
         """计算转发内容的高度和内容（递归调用绘制方法）"""
-        repost_image = await self._create_card_image(repost, False)
+        repost_image = await self.create_card_image(repost, False)
         # 缩放图片
         scaled_width = int(repost_image.width * self.REPOST_SCALE)
         scaled_height = int(repost_image.height * self.REPOST_SCALE)

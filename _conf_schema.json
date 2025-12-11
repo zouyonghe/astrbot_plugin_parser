@@ -52,6 +52,12 @@
         "hint": "解析生成的消息达到此阈值时，将消息合并转发",
         "default": 2
     },
+    "simple_mode": { 
+        "description": "简洁模式",
+        "type": "bool",
+        "hint": "简洁模式下，当解析出任何媒体内容后，不再进一步渲染卡片",
+        "default": true
+    },
     "upload_audio": {
         "description": "上传音频文件",
         "type": "bool",
