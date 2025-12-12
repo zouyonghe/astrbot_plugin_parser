@@ -20,6 +20,7 @@ from astrbot.core.message.components import (
     BaseMessageComponent,
     Forward,
     Image,
+    Json,
     Node,
     Nodes,
     Plain,
@@ -43,7 +44,7 @@ from .core.parsers import (
     YouTubeParser,
 )
 from .core.render import CommonRenderer
-from .core.utils import save_cookies_with_netscape
+from .core.utils import extract_json_url, save_cookies_with_netscape
 
 
 @register("astrbot_plugin_parser", "Zhalslar", "...", "...")
@@ -206,16 +207,24 @@ class ParserPlugin(Star):
         if umo in self.config["disabled_sessions"]:
             return
 
-        text = event.message_str
-        if not text:
-            return
         chain = event.get_messages()
         if not chain:
             return
 
-        # 专门@其他bot的消息不解析
-        self_id = event.get_self_id()
         seg1 = chain[0]
+        text = event.message_str
+
+        # 解析Json组件
+        if isinstance(seg1, Json):
+            text = extract_json_url(seg1.data)
+            logger.debug(f"解析Json组件: {text}")
+
+        if not text:
+            return
+
+        self_id = event.get_self_id()
+
+        # 专门@其他bot的消息不解析
         if isinstance(seg1, At) and str(seg1.qq) != self_id:
             return
 

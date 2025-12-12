@@ -2,8 +2,9 @@ import asyncio
 import hashlib
 from collections import OrderedDict
 from http import cookiejar
+import json
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 from urllib.parse import urlparse
 
 from astrbot.api import logger
@@ -252,3 +253,35 @@ def ck2dict(cookies_str: str) -> dict[str, str]:
         name, value = cookie.strip().split("=", 1)
         res[name] = value
     return res
+
+
+def extract_json_url(data: dict | str) -> str | None:
+    """处理 JSON 类型的消息段，提取 URL
+
+    Args:
+        data: JSON 类型的消息字典
+
+    Returns:
+        Optional[str]: 提取的 URL, 如果提取失败则返回 None
+    """
+    if isinstance(data, str):
+        try:
+            data = json.loads(data)
+        except Exception:
+            return None
+
+    if not isinstance(data, dict):
+        return None
+
+    meta: dict[str, Any] | None = data.get("meta")
+    if not meta:
+        return None
+
+    for key1, key2 in (
+        ("detail_1", "qqdocurl"),
+        ("news", "jumpUrl"),
+        ("music", "jumpUrl"),
+    ):
+        if url := meta.get(key1, {}).get(key2):
+            return url
+    return None
