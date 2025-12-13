@@ -280,7 +280,7 @@ class BaseParser:
     def create_file_content(
         self,
         url_or_task: str | Task[Path],
-        name : str | None = None,
+        name: str | None = None,
     ):
         """创建文件内容"""
         from .data import FileContent
