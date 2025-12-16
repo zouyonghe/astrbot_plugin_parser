@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from astrbot.api import logger
 from astrbot.core.config.astrbot_config import AstrBotConfig
@@ -38,7 +39,7 @@ class EmojiLikeArbiter:
         message_id = int(event.message_obj.message_id)
         self_id = int(event.get_self_id())
         msg = event.message_obj.raw_message
-        msg_time = int(msg.get("time", 0)) # type: ignore
+        msg_time = int(msg.get("time", time.time())) # type: ignore
 
         # 第一次检查：是否已经有人贴了，有人贴了就放弃
         users = await self._fetch_users(client, message_id)
