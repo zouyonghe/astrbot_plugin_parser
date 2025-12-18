@@ -371,7 +371,7 @@ class ParserPlugin(Star):
             return
 
         audio_path = await self.downloader.download_audio(
-            audio_url, audio_name=f"{bvid}-{page_idx}.mp3", ext_headers=parser.headers
+            audio_url, audio_name=f"{bvid}-{page_idx}.mp3", ext_headers=parser.headers, proxy=parser.proxy
         )
         yield event.chain_result([Record(audio_path)])  # type: ignore
 
@@ -391,7 +391,7 @@ class ParserPlugin(Star):
 
         url = matched.group(0)
 
-        audio_path = await self.downloader.download_audio(url, use_ytdlp=True)
+        audio_path = await self.downloader.download_audio(url, use_ytdlp=True, proxy=parser.proxy)
         yield event.chain_result([Record(audio_path)])  # type: ignore
 
         if self.config["upload_audio"]:
