@@ -206,9 +206,18 @@ class InstagramParser(BaseParser):
 
     def _extract_video_url(self, entry: dict[str, Any]) -> str | None:
         url = entry.get("url")
-        vcodec = entry.get("vcodec")
-        if isinstance(url, str) and url and vcodec not in ("none", None):
-            return url
+        if isinstance(url, str) and url:
+            ext = entry.get("ext")
+            mime_type = entry.get("mime_type")
+            vcodec = entry.get("vcodec")
+            if vcodec not in ("none", None):
+                return url
+            if isinstance(ext, str) and ext.lower() in {"mp4", "m4v", "webm"}:
+                return url
+            if isinstance(mime_type, str) and mime_type.startswith("video/"):
+                return url
+            if ".mp4" in url or ".m4v" in url or ".webm" in url:
+                return url
         return self._best_video_format_url(entry.get("formats"))
 
     @staticmethod
@@ -224,7 +233,14 @@ class InstagramParser(BaseParser):
                 continue
             vcodec = fmt.get("vcodec")
             if vcodec in (None, "none"):
-                continue
+                ext = fmt.get("ext")
+                mime_type = fmt.get("mime_type")
+                if isinstance(ext, str) and ext.lower() in {"mp4", "m4v", "webm"}:
+                    pass
+                elif isinstance(mime_type, str) and mime_type.startswith("video/"):
+                    pass
+                else:
+                    continue
             candidates.append(fmt)
         if not candidates:
             return None
