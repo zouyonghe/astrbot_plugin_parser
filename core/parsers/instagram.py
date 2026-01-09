@@ -356,8 +356,10 @@ class InstagramParser(BaseParser):
         best = max(candidates, key=sort_key)
         return best
 
-    @staticmethod
-    def _best_audio_format(formats: list[dict[str, Any]]) -> dict[str, Any] | None:
+    @classmethod
+    def _best_audio_format(
+        cls, formats: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         candidates: list[dict[str, Any]] = []
         for fmt in formats:
             if not isinstance(fmt, dict):
@@ -367,9 +369,9 @@ class InstagramParser(BaseParser):
                 continue
             vcodec = fmt.get("vcodec")
             acodec = fmt.get("acodec")
-            if self._codec_is_none(acodec):
+            if cls._codec_is_none(acodec):
                 continue
-            if not self._codec_is_none(vcodec):
+            if not cls._codec_is_none(vcodec):
                 continue
             protocol = fmt.get("protocol")
             if isinstance(protocol, str) and not protocol.startswith("http"):
