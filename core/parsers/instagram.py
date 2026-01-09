@@ -348,7 +348,7 @@ class InstagramParser(BaseParser):
                             proxy=self.proxy,
                         )
                     contents.append(VideoContent(video_task, cover_task, duration))
-                elif is_video_url and single_entry and not fallback_video_tried:
+                else:
                     fallback_video_tried = True
                     try:
                         video_task = await self._download_with_ytdlp(
@@ -360,14 +360,6 @@ class InstagramParser(BaseParser):
                         continue
                     except ParseException:
                         pass
-                else:
-                    video_task = self.downloader.download_video(
-                        video_url,
-                        video_name=f"{base_name}_v.mp4",
-                        ext_headers=self.headers,
-                        proxy=self.proxy,
-                    )
-                    contents.append(VideoContent(video_task, cover_task, duration))
             if meta_entry is None:
                 meta_entry = entry
 
