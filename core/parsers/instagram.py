@@ -186,7 +186,9 @@ class InstagramParser(BaseParser):
             raise ParseException("gallery-dl 未返回图片链接")
         return urls
 
-    async def _fetch_ytdlp_info(self, url: str) -> dict[str, Any] | None:
+    async def _fetch_ytdlp_info(
+        self, url: str, max_attempts: int = 3
+    ) -> dict[str, Any] | None:
         opts = {
             "quiet": True,
             "skip_download": True,
@@ -196,7 +198,6 @@ class InstagramParser(BaseParser):
             opts["http_headers"]["Cookie"] = self.ig_cookie_header
         if self.ig_cookies_file and self.ig_cookies_file.is_file():
             opts["cookiefile"] = str(self.ig_cookies_file)
-        max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
@@ -494,9 +495,31 @@ class InstagramParser(BaseParser):
     async def _parse(self, searched: re.Match[str]):
         url = searched.group(0)
         final_url = await self.get_final_url(url, headers=self.headers)
-        is_video_url = any(key in final_url for key in ("/reel/", "/reels/", "/tv/"))
+        if matched := re.search(r"/(p|reel|reels|tv)/", final_url):
+            kind = matched.group(1)
+        else:
+            kind = ""
+        is_video_url = kind in {"reel", "reels", "tv"}
         shortcode = self._extract_shortcode(final_url) or self._extract_shortcode(url)
         base_prefix = f"ig_{shortcode}" if shortcode else "ig"
+        if kind == "p":
+            gallery_urls = await self._gallery_dl_image_urls(final_url)
+            contents = []
+            for idx, image_url in enumerate(gallery_urls, start=1):
+                image_name = (
+                    f"{base_prefix}_{idx}{Path(urlparse(image_url).path).suffix}"
+                    if shortcode
+                    else None
+                )
+                image_task = self.downloader.download_img(
+                    image_url,
+                    img_name=image_name,
+                    ext_headers=self.headers,
+                    proxy=self.proxy,
+                )
+                contents.append(ImageContent(image_task))
+            return self.result(contents=contents, url=final_url)
+
         info = await self._fetch_ytdlp_info(final_url)
         if info is None:
             if not is_video_url:
@@ -516,7 +539,7 @@ class InstagramParser(BaseParser):
                     )
                     contents.append(ImageContent(image_task))
                 return self.result(contents=contents, url=final_url)
-            raise ParseException("获取视频信息失败")
+            return self.result(contents=contents, url=final_url)
         entries = self._iter_entries(info)
         single_entry = len(entries) == 1
 
