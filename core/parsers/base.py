@@ -1,5 +1,6 @@
 """Parser 基类定义"""
 
+import asyncio
 from abc import ABC
 from asyncio import Task
 from collections.abc import Callable, Coroutine
@@ -179,14 +180,26 @@ class BaseParser:
         headers: dict[str, str] | None = None,
     ) -> str:
         """获取重定向后的 URL, 单次重定向"""
-
         headers = headers or COMMON_HEADER.copy()
-        async with self.client.get(
-            url, headers=headers, allow_redirects=False, proxy=self.proxy
-        ) as resp:
-            if resp.status >= 400:
-                raise ClientError(f"redirect check {resp.status} {resp.reason}")
-            return resp.headers.get("Location", url)
+        retries = 2
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                async with self.client.get(
+                    url, headers=headers, allow_redirects=False, proxy=self.proxy
+                ) as resp:
+                    if resp.status >= 400:
+                        raise ClientError(
+                            f"redirect check {resp.status} {resp.reason}"
+                        )
+                    return resp.headers.get("Location", url)
+            except (ClientError, asyncio.TimeoutError) as exc:
+                last_exc = exc
+                if attempt < retries:
+                    await asyncio.sleep(1 + attempt)
+                    continue
+                raise
+        raise ClientError("redirect check failed") from last_exc
 
     async def get_final_url(
         self,
@@ -195,12 +208,23 @@ class BaseParser:
     ) -> str:
         """获取重定向后的 URL, 允许多次重定向"""
         headers = headers or COMMON_HEADER.copy()
-        async with self.client.get(
-            url, headers=headers, allow_redirects=True, proxy=self.proxy
-        ) as resp:
-            if resp.status >= 400:
-                raise ClientError(f"final url check {resp.status} {resp.reason}")
-            return str(resp.url)
+        retries = 2
+        last_exc: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                async with self.client.get(
+                    url, headers=headers, allow_redirects=True, proxy=self.proxy
+                ) as resp:
+                    if resp.status >= 400:
+                        raise ClientError(f"final url check {resp.status} {resp.reason}")
+                    return str(resp.url)
+            except (ClientError, asyncio.TimeoutError) as exc:
+                last_exc = exc
+                if attempt < retries:
+                    await asyncio.sleep(1 + attempt)
+                    continue
+                raise
+        raise ClientError("final url check failed") from last_exc
 
     def create_author(
         self,
