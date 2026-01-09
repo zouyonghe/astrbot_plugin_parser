@@ -120,7 +120,10 @@ class BaseParser:
     def client(self) -> ClientSession:
         """获取当前实例的 session，惰性创建"""
         if self._session is None or self._session.closed:
-            self._session = ClientSession(timeout=ClientTimeout(total=self._timeout))
+            self._session = ClientSession(
+                timeout=ClientTimeout(total=self._timeout),
+                trust_env=True,
+            )
         return self._session
 
     async def close_session(self) -> None:
