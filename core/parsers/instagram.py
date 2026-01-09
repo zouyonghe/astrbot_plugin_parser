@@ -213,8 +213,8 @@ class InstagramParser(BaseParser):
             url,
             use_ytdlp=True,
             ytdlp_format=(
-                "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"
-                "best[height<=720][ext=mp4]/best[ext=mp4]"
+                "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
+                "bestvideo+bestaudio/best"
             ),
             cookiefile=self.ig_cookies_file,
             proxy=self.proxy,
@@ -302,16 +302,10 @@ class InstagramParser(BaseParser):
             candidates.append(fmt)
         if not candidates:
             return None
-        prefer = [
-            fmt
-            for fmt in candidates
-            if isinstance(fmt.get("height"), int) and fmt["height"] <= 720
-        ]
-        target = prefer if prefer else candidates
 
         def sort_key(fmt: dict[str, Any]) -> int:
             height = fmt.get("height")
             return int(height) if isinstance(height, int) else 0
 
-        best = max(target, key=sort_key)
+        best = max(candidates, key=sort_key)
         return best.get("url")
