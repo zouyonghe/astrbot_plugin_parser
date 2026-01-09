@@ -126,25 +126,37 @@ class Downloader:
                 ) as response:
                     if response.status >= 400:
                         raise ClientError(f"HTTP {response.status} {response.reason}")
-                    content_length = response.headers.get("Content-Length")
-                    content_length = int(content_length) if content_length else 0
+                    content_length = response.content_length
+                    max_bytes = self.max_size * 1024 * 1024
 
                     if content_length == 0:
                         logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
                         raise ZeroSizeException
-                    if (file_size := content_length / 1024 / 1024) > self.max_size:
+                    if content_length and content_length > max_bytes:
                         logger.warning(
-                            f"媒体 url: {url} 大小 {file_size:.2f} MB 超过 {self.max_size} MB, 取消下载"
+                            f"媒体 url: {url} 大小 {content_length / 1024 / 1024:.2f} MB 超过 {self.max_size} MB, 取消下载"
                         )
                         raise SizeLimitException
 
+                    downloaded = 0
                     with self.get_progress_bar(file_name, content_length) as bar:
                         async with aiofiles.open(file_path, "wb") as file:
                             async for chunk in response.content.iter_chunked(
                                 1024 * 1024
                             ):
+                                downloaded += len(chunk)
+                                if downloaded > max_bytes:
+                                    raise SizeLimitException
                                 await file.write(chunk)
                                 bar.update(len(chunk))
+
+                    if downloaded == 0:
+                        logger.warning(f"媒体 url: {url}, 实际大小为 0, 取消下载")
+                        raise ZeroSizeException
+                    if content_length and downloaded < content_length:
+                        raise ClientError(
+                            f"HTTP payload incomplete {downloaded}/{content_length}"
+                        )
 
                 return file_path
             except (ZeroSizeException, SizeLimitException):
