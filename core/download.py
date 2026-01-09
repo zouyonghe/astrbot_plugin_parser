@@ -117,35 +117,44 @@ class Downloader:
         if proxy is ...:
             proxy = self.proxy
 
-        try:
-            async with self.client.get(
-                url, headers=headers, allow_redirects=True, proxy=proxy
-            ) as response:
-                if response.status >= 400:
-                    raise ClientError(f"HTTP {response.status} {response.reason}")
-                content_length = response.headers.get("Content-Length")
-                content_length = int(content_length) if content_length else 0
+        proxies = [proxy]
+        if proxy is not None:
+            proxies.append(None)
 
-                if content_length == 0:
-                    logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
-                    raise ZeroSizeException
-                if (file_size := content_length / 1024 / 1024) > self.max_size:
-                    logger.warning(
-                        f"媒体 url: {url} 大小 {file_size:.2f} MB 超过 {self.max_size} MB, 取消下载"
-                    )
-                    raise SizeLimitException
+        for idx, current_proxy in enumerate(proxies):
+            try:
+                async with self.client.get(
+                    url, headers=headers, allow_redirects=True, proxy=current_proxy
+                ) as response:
+                    if response.status >= 400:
+                        raise ClientError(f"HTTP {response.status} {response.reason}")
+                    content_length = response.headers.get("Content-Length")
+                    content_length = int(content_length) if content_length else 0
 
-                with self.get_progress_bar(file_name, content_length) as bar:
-                    async with aiofiles.open(file_path, "wb") as file:
-                        async for chunk in response.content.iter_chunked(1024 * 1024):
-                            await file.write(chunk)
-                            bar.update(len(chunk))
+                    if content_length == 0:
+                        logger.warning(f"媒体 url: {url}, 大小为 0, 取消下载")
+                        raise ZeroSizeException
+                    if (file_size := content_length / 1024 / 1024) > self.max_size:
+                        logger.warning(
+                            f"媒体 url: {url} 大小 {file_size:.2f} MB 超过 {self.max_size} MB, 取消下载"
+                        )
+                        raise SizeLimitException
 
-        except ClientError:
-            await safe_unlink(file_path)
-            logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
-            raise DownloadException("媒体下载失败")
-        return file_path
+                    with self.get_progress_bar(file_name, content_length) as bar:
+                        async with aiofiles.open(file_path, "wb") as file:
+                            async for chunk in response.content.iter_chunked(
+                                1024 * 1024
+                            ):
+                                await file.write(chunk)
+                                bar.update(len(chunk))
+
+                return file_path
+            except ClientError as exc:
+                await safe_unlink(file_path)
+                if current_proxy is not None and idx == 0:
+                    continue
+                logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
+                raise DownloadException("媒体下载失败") from exc
 
     @staticmethod
     def get_progress_bar(desc: str, total: int | None = None) -> tqdm:

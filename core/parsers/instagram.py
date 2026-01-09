@@ -10,7 +10,7 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from ..data import Platform, VideoContent
 from ..download import Downloader
 from ..exception import ParseException
-from ..utils import generate_file_name, save_cookies_with_netscape
+from ..utils import generate_file_name, safe_unlink, save_cookies_with_netscape
 from .base import BaseParser, handle
 
 
@@ -37,34 +37,55 @@ class InstagramParser(BaseParser):
         return cookies_file
 
     async def _extract_info(self, url: str) -> dict[str, Any]:
-        opts: dict[str, Any] = {"quiet": True, "skip_download": True}
-        if self.proxy:
-            opts["proxy"] = self.proxy
-        if self._cookies_file and self._cookies_file.is_file():
-            opts["cookiefile"] = str(self._cookies_file)
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            raw = await asyncio.to_thread(ydl.extract_info, url, download=False)
-        if not isinstance(raw, dict):
-            raise ParseException("获取视频信息失败")
-        return raw
+        last_exc: Exception | None = None
+        proxy_steps = (True, False) if self.proxy else (False,)
+        for use_proxy in proxy_steps:
+            opts: dict[str, Any] = {"quiet": True, "skip_download": True}
+            if use_proxy:
+                opts["proxy"] = self.proxy
+            if self._cookies_file and self._cookies_file.is_file():
+                opts["cookiefile"] = str(self._cookies_file)
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    raw = await asyncio.to_thread(ydl.extract_info, url, download=False)
+            except Exception as exc:
+                last_exc = exc
+                if use_proxy:
+                    continue
+                raise
+            if not isinstance(raw, dict):
+                raise ParseException("获取视频信息失败")
+            return raw
+        raise ParseException("获取视频信息失败") from last_exc
 
     async def _download_with_ytdlp(self, url: str) -> Path:
         output_path = self.downloader.cache_dir / generate_file_name(url, ".mp4")
         if output_path.exists():
             return output_path
-        opts: dict[str, Any] = {
-            "quiet": True,
-            "outtmpl": str(output_path),
-            "merge_output_format": "mp4",
-            "format": "best[height<=720]/bestvideo[height<=720]+bestaudio/best",
-        }
-        if self.proxy:
-            opts["proxy"] = self.proxy
-        if self._cookies_file and self._cookies_file.is_file():
-            opts["cookiefile"] = str(self._cookies_file)
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            await asyncio.to_thread(ydl.download, [url])
-        return output_path
+        last_exc: Exception | None = None
+        proxy_steps = (True, False) if self.proxy else (False,)
+        for use_proxy in proxy_steps:
+            opts: dict[str, Any] = {
+                "quiet": True,
+                "outtmpl": str(output_path),
+                "merge_output_format": "mp4",
+                "format": "best[height<=720]/bestvideo[height<=720]+bestaudio/best",
+            }
+            if use_proxy:
+                opts["proxy"] = self.proxy
+            if self._cookies_file and self._cookies_file.is_file():
+                opts["cookiefile"] = str(self._cookies_file)
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    await asyncio.to_thread(ydl.download, [url])
+                return output_path
+            except Exception as exc:
+                last_exc = exc
+                await safe_unlink(output_path)
+                if use_proxy:
+                    continue
+                raise
+        raise ParseException("下载失败") from last_exc
 
     @staticmethod
     def _iter_entries(info: dict[str, Any]) -> list[dict[str, Any]]:
