@@ -23,7 +23,13 @@ from .exception import (
     SizeLimitException,
     ZeroSizeException,
 )
-from .utils import LimitedSizeDict, generate_file_name, merge_av, safe_unlink
+from .utils import (
+    LimitedSizeDict,
+    encode_video_to_h264,
+    generate_file_name,
+    merge_av,
+    safe_unlink,
+)
 
 P = ParamSpec("P")
 T = TypeVar("T")
@@ -178,6 +184,7 @@ class Downloader:
         ext_headers: dict[str, str] | None = None,
         use_ytdlp: bool = False,
         ytdlp_format: str | None = None,
+        reencode_h264: bool = False,
         cookiefile: Path | None = None,
         proxy: str | None | object = ...,
     ) -> Path:
@@ -188,6 +195,7 @@ class Downloader:
             video_name (str | None): video name. Defaults to get name by parse url.
             ext_headers (dict[str, str] | None): ext headers. Defaults to None.
             use_ytdlp (bool): use ytdlp to download video. Defaults to False.
+            reencode_h264 (bool): re-encode video to H.264 if using ytdlp.
             cookiefile (Path | None): cookie file path. Defaults to None.
             proxy (str | None): proxy URL. Defaults to configured proxy. Use None to disable proxy.
 
@@ -198,7 +206,9 @@ class Downloader:
             httpx.HTTPError: When download fails
         """
         if use_ytdlp:
-            return await self._ytdlp_download_video(url, cookiefile, ytdlp_format)
+            return await self._ytdlp_download_video(
+                url, cookiefile, ytdlp_format, reencode_h264
+            )
 
         if video_name is None:
             video_name = generate_file_name(url, ".mp4")
@@ -399,12 +409,18 @@ class Downloader:
         url: str,
         cookiefile: Path | None = None,
         ytdlp_format: str | None = None,
+        reencode_h264: bool = False,
     ) -> Path:
         info = await self.ytdlp_extract_info(url, cookiefile)
         if info.duration > self.max_duration:
             raise DurationLimitException
 
-        cache_key = url if not ytdlp_format else f"{url}|{ytdlp_format}"
+        cache_parts = [url]
+        if ytdlp_format:
+            cache_parts.append(ytdlp_format)
+        if reencode_h264:
+            cache_parts.append("h264")
+        cache_key = "|".join(cache_parts)
         video_path = self.cache_dir / generate_file_name(cache_key, ".mp4")
         if video_path.exists():
             return video_path
@@ -432,6 +448,11 @@ class Downloader:
             try:
                 await asyncio.to_thread(ydl.download, [url])
             except DownloadError as exc:
+                raise DownloadException(str(exc)) from exc
+        if reencode_h264:
+            try:
+                return await encode_video_to_h264(video_path)
+            except RuntimeError as exc:
                 raise DownloadException(str(exc)) from exc
         return video_path
 

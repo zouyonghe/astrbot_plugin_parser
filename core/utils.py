@@ -158,12 +158,22 @@ async def encode_video_to_h264(video_path: Path) -> Path:
         "-y",
         "-i",
         str(video_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        "0:a:0?",
         "-c:v",
         "libx264",
         "-preset",
         "medium",
         "-crf",
         "23",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "128k",
+        "-movflags",
+        "+faststart",
         str(output_path),
     ]
     await exec_ffmpeg_cmd(cmd)
@@ -287,4 +297,3 @@ def extract_json_url(data: dict | str) -> str | None:
         if url := meta.get(key1, {}).get(key2):
             return url
     return None
-

@@ -216,6 +216,7 @@ class InstagramParser(BaseParser):
                 "bestvideo[ext=mp4]+bestaudio[ext=m4a]/"
                 "bestvideo+bestaudio/best"
             ),
+            reencode_h264=True,
             cookiefile=self.ig_cookies_file,
             proxy=self.proxy,
         )
