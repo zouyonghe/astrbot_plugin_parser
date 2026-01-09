@@ -28,6 +28,7 @@ from .utils import (
     encode_video_to_h264,
     generate_file_name,
     merge_av,
+    merge_av_h264,
     safe_unlink,
 )
 
@@ -340,6 +341,7 @@ class Downloader:
         output_path: Path,
         ext_headers: dict[str, str] | None = None,
         proxy: str | None | object = ...,
+        reencode_h264: bool = False,
     ) -> Path:
         """download video and audio file by url with stream and merge
 
@@ -349,6 +351,7 @@ class Downloader:
             output_path (Path): output file path
             ext_headers (dict[str, str] | None): ext headers. Defaults to None.
             proxy (str | None): proxy URL. Defaults to configured proxy. Use None to disable proxy.
+            reencode_h264 (bool): re-encode video to H.264 when merging.
 
         Returns:
             Path: merged file path
@@ -357,7 +360,10 @@ class Downloader:
             self.download_video(v_url, ext_headers=ext_headers, proxy=proxy),
             self.download_audio(a_url, ext_headers=ext_headers, proxy=proxy),
         )
-        await merge_av(v_path=v_path, a_path=a_path, output_path=output_path)
+        if reencode_h264:
+            await merge_av_h264(v_path=v_path, a_path=a_path, output_path=output_path)
+        else:
+            await merge_av(v_path=v_path, a_path=a_path, output_path=output_path)
         return output_path
 
     # region -------------------- 私有：yt-dlp --------------------
@@ -377,13 +383,40 @@ class Downloader:
             opts["proxy"] = self.proxy
         if cookiefile and cookiefile.is_file():
             opts["cookiefile"] = str(cookiefile)
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                raw = await asyncio.to_thread(ydl.extract_info, url, download=False)
+        max_attempts = 3
+        raw = None
+        last_exc: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    raw = await asyncio.to_thread(ydl.extract_info, url, download=False)
                 if not raw:
                     raise ParseException("获取视频信息失败")
-        except DownloadError as exc:
-            raise ParseException(str(exc)) from exc
+                break
+            except (DownloadError, ParseException) as exc:
+                last_exc = exc
+                logger.warning(
+                    "yt-dlp extract_info failed (%s/%s) | url=%s | %s",
+                    attempt,
+                    max_attempts,
+                    url,
+                    exc,
+                )
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "yt-dlp extract_info error (%s/%s) | url=%s | %s",
+                    attempt,
+                    max_attempts,
+                    url,
+                    exc,
+                )
+            if attempt < max_attempts:
+                await asyncio.sleep(min(2 * attempt, 5))
+        if not raw:
+            if last_exc:
+                raise ParseException(str(last_exc)) from last_exc
+            raise ParseException("获取视频信息失败")
         if isinstance(raw, dict):
             duration = raw.get("duration")
             if isinstance(duration, float):
@@ -450,11 +483,24 @@ class Downloader:
         if cookiefile and cookiefile.is_file():
             opts["cookiefile"] = str(cookiefile)
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            try:
-                await asyncio.to_thread(ydl.download, [url])
-            except DownloadError as exc:
-                raise DownloadException(str(exc)) from exc
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                try:
+                    await asyncio.to_thread(ydl.download, [url])
+                    break
+                except DownloadError as exc:
+                    await safe_unlink(video_path)
+                    logger.warning(
+                        "yt-dlp download failed (%s/%s) | url=%s | %s",
+                        attempt,
+                        max_attempts,
+                        url,
+                        exc,
+                    )
+                    if attempt == max_attempts:
+                        raise DownloadException(str(exc)) from exc
+                    await asyncio.sleep(min(2 * attempt, 5))
         if reencode_h264:
             try:
                 return await encode_video_to_h264(video_path)
@@ -488,11 +534,24 @@ class Downloader:
         if cookiefile and cookiefile.is_file():
             opts["cookiefile"] = str(cookiefile)
 
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            try:
-                await asyncio.to_thread(ydl.download, [url])
-            except DownloadError as exc:
-                raise DownloadException(str(exc)) from exc
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                try:
+                    await asyncio.to_thread(ydl.download, [url])
+                    break
+                except DownloadError as exc:
+                    await safe_unlink(audio_path)
+                    logger.warning(
+                        "yt-dlp audio download failed (%s/%s) | url=%s | %s",
+                        attempt,
+                        max_attempts,
+                        url,
+                        exc,
+                    )
+                    if attempt == max_attempts:
+                        raise DownloadException(str(exc)) from exc
+                    await asyncio.sleep(min(2 * attempt, 5))
         return audio_path
 
     async def close(self):
