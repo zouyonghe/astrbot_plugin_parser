@@ -12,7 +12,7 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from ..data import ParseResult, Platform
 from ..download import Downloader
 from ..exception import DownloadException
-from ..utils import encode_video_to_h264, generate_file_name, save_cookies_with_netscape
+from ..utils import generate_file_name, save_cookies_with_netscape
 from .base import BaseParser, handle
 
 
@@ -22,6 +22,7 @@ class InstagramParser(BaseParser):
     def __init__(self, config: AstrBotConfig, downloader: Downloader):
         super().__init__(config, downloader)
         self.ig_cookies_file: Path | None = None
+        self.ig_cookie_header: str | None = None
         self._set_cookies()
 
     def _set_cookies(self) -> None:
@@ -29,6 +30,7 @@ class InstagramParser(BaseParser):
         raw_cookies = raw_cookies.strip()
         if not raw_cookies:
             return
+        self.ig_cookie_header = self._cookie_header_from_raw(raw_cookies)
 
         cookie_file = self.data_dir / "ig_cookies.txt"
         cookie_file.parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +107,8 @@ class InstagramParser(BaseParser):
             return None
 
         ext_headers = {**self.headers, "Referer": "https://www.instagram.com/"}
+        if self.ig_cookie_header:
+            ext_headers["Cookie"] = self.ig_cookie_header
         contents = self._extract_ytdlp_contents(info, ext_headers, page_url)
         if not contents:
             return None
@@ -131,7 +135,10 @@ class InstagramParser(BaseParser):
         opts = {
             "quiet": True,
             "skip_download": True,
+            "http_headers": {**self.headers, "Referer": "https://www.instagram.com/"},
         }
+        if self.ig_cookie_header:
+            opts["http_headers"]["Cookie"] = self.ig_cookie_header
         if self.ig_cookies_file and self.ig_cookies_file.is_file():
             opts["cookiefile"] = str(self.ig_cookies_file)
         max_attempts = 3
@@ -162,6 +169,8 @@ class InstagramParser(BaseParser):
 
     def _fallback_ytdlp_result(self, page_url: str) -> ParseResult:
         ext_headers = {**self.headers, "Referer": "https://www.instagram.com/"}
+        if self.ig_cookie_header:
+            ext_headers["Cookie"] = self.ig_cookie_header
         contents = [
             self._create_ytdlp_video_content(page_url, {}, 0.0, ext_headers)
         ]
@@ -228,6 +237,10 @@ class InstagramParser(BaseParser):
                 raise DownloadException("媒体下载失败")
 
             v_url, a_url = self._select_media_urls(info)
+            if a_url is None:
+                full_info = await self._fetch_ytdlp_info(url)
+                if full_info and full_info is not info:
+                    v_url, a_url = self._select_media_urls(full_info)
             if not v_url:
                 raise DownloadException("媒体下载失败")
 
@@ -241,7 +254,6 @@ class InstagramParser(BaseParser):
                     output_path=output_path,
                     ext_headers=ext_headers,
                     proxy=self.proxy,
-                    reencode_h264=True,
                 )
 
             return await self._download_single_video(v_url, ext_headers)
@@ -258,17 +270,15 @@ class InstagramParser(BaseParser):
         self, v_url: str, ext_headers: dict[str, str]
     ) -> Path:
         file_name = generate_file_name(v_url, ".mp4")
-        base_path = self.downloader.cache_dir / file_name
-        output_path = base_path.with_name(f"{base_path.stem}_h264{base_path.suffix}")
+        output_path = self.downloader.cache_dir / file_name
         if output_path.exists():
             return output_path
-        video_path = await self.downloader.streamd(
+        return await self.downloader.streamd(
             v_url,
             file_name=file_name,
             ext_headers=ext_headers,
             proxy=self.proxy,
         )
-        return await encode_video_to_h264(video_path)
 
     def _merged_output_path(self, v_url: str, a_url: str) -> Path:
         digest = hashlib.md5(f"{v_url}|{a_url}".encode()).hexdigest()[:16]
@@ -282,6 +292,11 @@ class InstagramParser(BaseParser):
             video_fmt = self._best_video_format(formats)
             audio_fmt = self._best_audio_format(formats)
             if video_fmt and audio_fmt:
+                logger.info(
+                    "Instagram selected formats v=%s a=%s",
+                    video_fmt.get("format_id"),
+                    audio_fmt.get("format_id"),
+                )
                 return video_fmt["url"], audio_fmt["url"]
             if video_fmt and not audio_fmt:
                 logger.warning("Instagram audio format not found, fallback to combined")
@@ -295,6 +310,10 @@ class InstagramParser(BaseParser):
             logger.warning("Instagram formats missing, using direct URL download")
             return direct_url, None
         return None, None
+
+    @staticmethod
+    def _codec_is_none(codec: Any) -> bool:
+        return codec in (None, "none", "audio only", "video only")
 
     @staticmethod
     def _format_url(fmt: dict[str, Any]) -> str | None:
@@ -315,9 +334,9 @@ class InstagramParser(BaseParser):
                 continue
             vcodec = fmt.get("vcodec")
             acodec = fmt.get("acodec")
-            if vcodec in (None, "none"):
+            if self._codec_is_none(vcodec):
                 continue
-            if acodec not in (None, "none"):
+            if not self._codec_is_none(acodec):
                 continue
             candidates.append(fmt)
         if not candidates:
@@ -348,9 +367,9 @@ class InstagramParser(BaseParser):
                 continue
             vcodec = fmt.get("vcodec")
             acodec = fmt.get("acodec")
-            if acodec in (None, "none"):
+            if self._codec_is_none(acodec):
                 continue
-            if vcodec not in (None, "none"):
+            if not self._codec_is_none(vcodec):
                 continue
             protocol = fmt.get("protocol")
             if isinstance(protocol, str) and not protocol.startswith("http"):
@@ -379,7 +398,7 @@ class InstagramParser(BaseParser):
                 continue
             vcodec = fmt.get("vcodec")
             acodec = fmt.get("acodec")
-            if vcodec in (None, "none") or acodec in (None, "none"):
+            if self._codec_is_none(vcodec) or self._codec_is_none(acodec):
                 continue
             candidates.append(fmt)
         if not candidates:
@@ -401,10 +420,30 @@ class InstagramParser(BaseParser):
 
     @staticmethod
     def _entry_webpage_url(entry: dict[str, Any], fallback: str) -> str:
-        url = entry.get("webpage_url") or entry.get("original_url")
+        url = entry.get("webpage_url")
         if isinstance(url, str) and url:
             return url
         return fallback
+
+    @staticmethod
+    def _cookie_header_from_raw(raw_cookies: str) -> str:
+        raw_cookies = raw_cookies.strip()
+        if not raw_cookies:
+            return ""
+        if raw_cookies.startswith("#") or "\t" in raw_cookies or "\n" in raw_cookies:
+            pairs: list[str] = []
+            for line in raw_cookies.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                parts = line.split()
+                if len(parts) < 7:
+                    continue
+                name = parts[5]
+                value = " ".join(parts[6:])
+                pairs.append(f"{name}={value}")
+            return "; ".join(pairs)
+        return raw_cookies.replace("\n", "").replace("\r", "").strip()
 
     def _is_video_entry(self, entry: dict[str, Any]) -> bool:
         url = entry.get("url")
