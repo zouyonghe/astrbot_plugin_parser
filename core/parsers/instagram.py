@@ -7,10 +7,10 @@ import yt_dlp
 
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
-from ..data import Platform
+from ..data import Platform, VideoContent
 from ..download import Downloader
 from ..exception import ParseException
-from ..utils import save_cookies_with_netscape
+from ..utils import generate_file_name, save_cookies_with_netscape
 from .base import BaseParser, handle
 
 
@@ -56,29 +56,67 @@ class InstagramParser(BaseParser):
         return [info]
 
     @staticmethod
-    def _pick_video_url(info: dict[str, Any]) -> str | None:
-        url = info.get("url")
-        if isinstance(url, str) and url.startswith("http"):
-            return url
+    def _format_url(fmt: dict[str, Any]) -> str | None:
+        url = fmt.get("url")
+        return url if isinstance(url, str) and url.startswith("http") else None
+
+    @staticmethod
+    def _has_video(fmt: dict[str, Any]) -> bool:
+        return (fmt.get("vcodec") or "none") != "none"
+
+    @staticmethod
+    def _has_audio(fmt: dict[str, Any]) -> bool:
+        return (fmt.get("acodec") or "none") != "none"
+
+    @staticmethod
+    def _is_m4a(fmt: dict[str, Any]) -> bool:
+        return fmt.get("ext") == "m4a"
+
+    @staticmethod
+    def _is_direct_format(fmt: dict[str, Any]) -> bool:
+        return fmt.get("protocol") not in ("m3u8", "m3u8_native")
+
+    @classmethod
+    def _pick_formats(
+        cls, info: dict[str, Any]
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         formats = info.get("formats") or []
-        best: dict[str, Any] | None = None
+        video_fmt: dict[str, Any] | None = None
+        audio_fmt: dict[str, Any] | None = None
+
         for fmt in formats:
             if not isinstance(fmt, dict):
                 continue
-            if fmt.get("vcodec") == "none":
+            if not cls._is_direct_format(fmt):
                 continue
-            fmt_url = fmt.get("url")
-            if not fmt_url:
+            if cls._format_url(fmt) is None:
                 continue
-            if best is None:
-                best = fmt
+
+            if cls._has_video(fmt):
+                if video_fmt is None:
+                    video_fmt = fmt
+                    continue
+                curr_height = video_fmt.get("height") or 0
+                new_height = fmt.get("height") or 0
+                if new_height > curr_height:
+                    video_fmt = fmt
+                elif new_height == curr_height:
+                    if cls._has_audio(fmt) and not cls._has_audio(video_fmt):
+                        video_fmt = fmt
                 continue
-            if fmt.get("acodec") != "none" and best.get("acodec") == "none":
-                best = fmt
-                continue
-            if (fmt.get("height") or 0) > (best.get("height") or 0):
-                best = fmt
-        return best.get("url") if best else None
+
+            if cls._has_audio(fmt):
+                if audio_fmt is None:
+                    audio_fmt = fmt
+                    continue
+                if cls._is_m4a(fmt) and not cls._is_m4a(audio_fmt):
+                    audio_fmt = fmt
+                    continue
+                if cls._is_m4a(fmt) == cls._is_m4a(audio_fmt):
+                    if (fmt.get("abr") or 0) > (audio_fmt.get("abr") or 0):
+                        audio_fmt = fmt
+
+        return video_fmt, audio_fmt
 
     @handle(
         "instagram.com",
@@ -97,19 +135,42 @@ class InstagramParser(BaseParser):
         contents = []
         meta_entry: dict[str, Any] | None = None
         for entry in entries:
-            video_url = self._pick_video_url(entry)
+            video_fmt, audio_fmt = self._pick_formats(entry)
+            video_url = self._format_url(video_fmt) if video_fmt else None
+            audio_url = self._format_url(audio_fmt) if audio_fmt else None
             if not video_url:
                 continue
             thumbnail = entry.get("thumbnail")
             duration = float(entry.get("duration") or 0)
-            contents.append(
-                self.create_video_content(
-                    video_url,
+            cover_task = None
+            if thumbnail:
+                cover_task = self.downloader.download_img(
                     thumbnail,
-                    duration,
                     ext_headers=self.headers,
+                    proxy=self.proxy,
                 )
-            )
+            if audio_url and video_fmt and not self._has_audio(video_fmt):
+                output_path = self.downloader.cache_dir / generate_file_name(
+                    video_url, ".mp4"
+                )
+                if output_path.exists():
+                    video_task = output_path
+                else:
+                    video_task = self.downloader.download_av_and_merge(
+                        video_url,
+                        audio_url,
+                        output_path=output_path,
+                        ext_headers=self.headers,
+                        proxy=self.proxy,
+                    )
+                contents.append(VideoContent(video_task, cover_task, duration))
+            else:
+                video_task = self.downloader.download_video(
+                    video_url,
+                    ext_headers=self.headers,
+                    proxy=self.proxy,
+                )
+                contents.append(VideoContent(video_task, cover_task, duration))
             if meta_entry is None:
                 meta_entry = entry
 
