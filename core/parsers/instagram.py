@@ -1,5 +1,6 @@
 import asyncio
 import re
+from pathlib import Path
 from typing import Any, ClassVar
 
 import yt_dlp
@@ -9,6 +10,7 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from ..data import ParseResult, Platform
 from ..download import Downloader
 from ..exception import ParseException
+from ..utils import save_cookies_with_netscape
 from .base import BaseParser, handle
 
 
@@ -17,6 +19,42 @@ class InstagramParser(BaseParser):
 
     def __init__(self, config: AstrBotConfig, downloader: Downloader):
         super().__init__(config, downloader)
+        self.ig_cookies_file: Path | None = None
+        if self.config.get("ig_cookies_file"):
+            self.ig_cookies_file = Path(self.config["ig_cookies_file"])
+        self._set_cookies()
+
+    def _set_cookies(self) -> None:
+        raw_cookies = self.config.get("ig_ck") or ""
+        raw_cookies = raw_cookies.strip()
+        if not raw_cookies:
+            return
+
+        cookie_file = self.data_dir / "ig_cookies.txt"
+        cookie_file.parent.mkdir(parents=True, exist_ok=True)
+
+        if self._looks_like_netscape(raw_cookies):
+            cookie_file.write_text(raw_cookies.rstrip() + "\n")
+        else:
+            cookies = raw_cookies.replace("\n", "").replace("\r", "").strip()
+            if not cookies:
+                return
+            save_cookies_with_netscape(cookies, cookie_file, "instagram.com")
+
+        self.config["ig_cookies_file"] = str(cookie_file)
+        self.config.save_config()
+        self.ig_cookies_file = cookie_file
+
+    @staticmethod
+    def _looks_like_netscape(raw_cookies: str) -> bool:
+        for line in raw_cookies.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 7:
+                return True
+        return False
 
     @handle(
         "instagram.com",
@@ -69,6 +107,8 @@ class InstagramParser(BaseParser):
             "skip_download": True,
             "force_generic_extractor": True,
         }
+        if self.ig_cookies_file and self.ig_cookies_file.is_file():
+            opts["cookiefile"] = str(self.ig_cookies_file)
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 raw = await asyncio.to_thread(ydl.extract_info, url, download=False)
