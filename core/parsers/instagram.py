@@ -66,7 +66,8 @@ class InstagramParser(BaseParser):
 
     @staticmethod
     def _has_audio(fmt: dict[str, Any]) -> bool:
-        return (fmt.get("acodec") or "none") != "none"
+        acodec = fmt.get("acodec") or "none"
+        return acodec not in ("none", "unknown")
 
     @staticmethod
     def _is_m4a(fmt: dict[str, Any]) -> bool:
@@ -102,6 +103,11 @@ class InstagramParser(BaseParser):
                     video_fmt = fmt
                 elif new_height == curr_height:
                     if cls._has_audio(fmt) and not cls._has_audio(video_fmt):
+                        video_fmt = fmt
+                        continue
+                    curr_tbr = video_fmt.get("tbr") or 0
+                    new_tbr = fmt.get("tbr") or 0
+                    if new_tbr > curr_tbr:
                         video_fmt = fmt
                 continue
 
