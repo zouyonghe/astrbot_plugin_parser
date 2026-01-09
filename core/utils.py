@@ -58,6 +58,43 @@ async def exec_ffmpeg_cmd(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg 执行失败: {error_msg}")
 
 
+async def has_audio_stream(video_path: Path) -> bool | None:
+    """检测视频是否包含音轨"""
+    cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "json",
+        str(video_path),
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+    except FileNotFoundError:
+        logger.warning("ffprobe 未安装或无法找到可执行文件")
+        return None
+
+    if process.returncode != 0:
+        error_msg = stderr.decode().strip()
+        logger.warning(f"ffprobe 执行失败: {error_msg}")
+        return None
+
+    try:
+        data = json.loads(stdout.decode() or "{}")
+    except json.JSONDecodeError:
+        return None
+
+    streams = data.get("streams") or []
+    return any(stream.get("codec_type") == "audio" for stream in streams)
+
+
 async def merge_av(
     *,
     v_path: Path,
