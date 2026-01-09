@@ -170,7 +170,6 @@ class Downloader:
                     continue
                 logger.exception(f"下载失败 | url: {url}, file_path: {file_path}")
                 raise DownloadException("媒体下载失败") from exc
-        raise DownloadException("媒体下载失败") from last_exc
 
     @staticmethod
     def get_progress_bar(desc: str, total: int | None = None) -> tqdm:
