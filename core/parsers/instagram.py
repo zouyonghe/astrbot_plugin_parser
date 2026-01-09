@@ -101,6 +101,70 @@ class InstagramParser(BaseParser):
 
         return None
 
+    @staticmethod
+    def _best_resource_url(resources: list[dict[str, Any]]) -> str | None:
+        best_url = None
+        best_area = 0
+        for res in resources:
+            if not isinstance(res, dict):
+                continue
+            url = res.get("src") or res.get("url") or res.get("display_url")
+            if not isinstance(url, str):
+                continue
+            width = res.get("config_width") or res.get("width") or 0
+            height = res.get("config_height") or res.get("height") or 0
+            area = int(width) * int(height)
+            if area > best_area:
+                best_area = area
+                best_url = url
+        return best_url
+
+    @staticmethod
+    def _find_resource_list(data: Any) -> list[dict[str, Any]] | None:
+        if isinstance(data, dict):
+            for key in ("display_resources", "candidates"):
+                value = data.get(key)
+                if isinstance(value, list):
+                    return value
+            for value in data.values():
+                found = InstagramParser._find_resource_list(value)
+                if found:
+                    return found
+        elif isinstance(data, list):
+            for item in data:
+                found = InstagramParser._find_resource_list(item)
+                if found:
+                    return found
+        return None
+
+    async def _fetch_json_image(self, shortcode: str) -> str | None:
+        for suffix in ("?__a=1&__d=dis", "?__a=1"):
+            url = f"https://www.instagram.com/p/{shortcode}/{suffix}"
+            try:
+                async with self.client.get(
+                    url, headers=self.headers, allow_redirects=True, proxy=self.proxy
+                ) as resp:
+                    if resp.status >= 400:
+                        continue
+                    data = json.loads(await resp.text())
+            except Exception:
+                continue
+
+            resources = None
+            graphql = data.get("graphql") if isinstance(data, dict) else None
+            if isinstance(graphql, dict):
+                media = graphql.get("shortcode_media")
+                if isinstance(media, dict):
+                    resources = media.get("display_resources")
+
+            if resources is None:
+                resources = self._find_resource_list(data)
+            if isinstance(resources, list):
+                best_url = self._best_resource_url(resources)
+                if best_url:
+                    return self._clean_url(best_url)
+        return None
+
     async def _upgrade_image_url(
         self, image_url: str, shortcode: str | None
     ) -> str:
@@ -120,6 +184,9 @@ class InstagramParser(BaseParser):
             f"https://www.instagram.com/p/{shortcode}/"
         ):
             return display_url
+
+        if json_url := await self._fetch_json_image(shortcode):
+            return json_url
 
         return image_url
 
