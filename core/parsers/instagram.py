@@ -454,29 +454,11 @@ class InstagramParser(BaseParser):
         is_video_url = kind in {"reel", "reels", "tv"}
         shortcode = self._extract_shortcode(final_url) or self._extract_shortcode(url)
         base_prefix = f"ig_{shortcode}" if shortcode else "ig"
-        if kind == "p":
-            gallery_urls = await self._gallery_dl_image_urls(final_url)
-            contents = []
-            for idx, image_url in enumerate(gallery_urls, start=1):
-                image_name = (
-                    f"{base_prefix}_{idx}{Path(urlparse(image_url).path).suffix}"
-                    if shortcode
-                    else None
-                )
-                image_task = self.downloader.download_img(
-                    image_url,
-                    img_name=image_name,
-                    ext_headers=self.headers,
-                    proxy=self.proxy,
-                )
-                contents.append(ImageContent(image_task))
-            return self.result(contents=contents, url=final_url)
-
         info = await self._fetch_ytdlp_info(final_url)
+        contents = []
         if info is None:
             if not is_video_url:
                 gallery_urls = await self._gallery_dl_image_urls(final_url)
-                contents = []
                 for idx, image_url in enumerate(gallery_urls, start=1):
                     image_name = (
                         f"{base_prefix}_{idx}{Path(urlparse(image_url).path).suffix}"
@@ -491,11 +473,17 @@ class InstagramParser(BaseParser):
                     )
                     contents.append(ImageContent(image_task))
                 return self.result(contents=contents, url=final_url)
-            return self.result(contents=contents, url=final_url)
+            try:
+                video_task = await self._download_with_ytdlp(
+                    final_url, f"{base_prefix}_ydlp.mp4"
+                )
+                contents.append(VideoContent(video_task, None, 0))
+                return self.result(contents=contents, url=final_url)
+            except ParseException as exc:
+                raise ParseException("未找到可下载的视频") from exc
         entries = self._iter_entries(info)
         single_entry = len(entries) == 1
 
-        contents = []
         meta_entry: dict[str, Any] | None = None
         fallback_video_tried = False
         for idx, entry in enumerate(entries):
@@ -526,8 +514,10 @@ class InstagramParser(BaseParser):
                         )
                     contents.append(VideoContent(video_task, cover_task, duration))
                 else:
-                    v_url, a_url = self._select_media_urls(info)
-                    if a_url:
+                    v_url, a_url = (None, None)
+                    if single_entry:
+                        v_url, a_url = self._select_media_urls(info)
+                    if a_url and v_url:
                         output_path = self._merged_output_path(v_url, a_url)
                         if output_path.exists():
                             video_task = output_path
