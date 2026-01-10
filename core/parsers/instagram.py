@@ -228,7 +228,6 @@ class InstagramParser(BaseParser):
         if output_path.exists():
             return output_path
         retries = 2
-        last_exc: Exception | None = None
         opts: dict[str, Any] = {
             "quiet": True,
             "outtmpl": str(output_path),
@@ -246,13 +245,11 @@ class InstagramParser(BaseParser):
                     await asyncio.to_thread(ydl.download, [url])
                 return output_path
             except Exception as exc:
-                last_exc = exc
                 await safe_unlink(output_path)
                 if attempt < retries:
                     await asyncio.sleep(1 + attempt)
                     continue
                 raise ParseException("下载失败") from exc
-        raise ParseException("下载失败") from last_exc
 
     @staticmethod
     def _iter_entries(info: dict[str, Any]) -> list[dict[str, Any]]:

@@ -118,7 +118,6 @@ class Downloader:
             proxy = self.proxy
 
         retries = 2
-        last_exc: Exception | None = None
         for attempt in range(retries + 1):
             try:
                 async with self.client.get(
@@ -163,7 +162,6 @@ class Downloader:
                 await safe_unlink(file_path)
                 raise
             except (ClientError, asyncio.TimeoutError) as exc:
-                last_exc = exc
                 await safe_unlink(file_path)
                 if attempt < retries:
                     await asyncio.sleep(1 + attempt)
