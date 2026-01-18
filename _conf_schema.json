@@ -251,6 +251,12 @@
                         "type": "bool",
                         "default": true
                     },
+                    "cookies": {
+                        "description": "小红书 Cookies",
+                        "hint": "选填, 部分链接解析有水印，填充Cookies可去除水印",
+                        "type": "text",
+                        "default": ""
+                    },
                     "use_proxy": {
                         "description": "使用代理",
                         "type": "bool",
