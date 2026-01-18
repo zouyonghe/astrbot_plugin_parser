@@ -45,7 +45,7 @@ class YouTubeParser(BaseParser):
         url = searched.group(0)
 
         video_info = await self.downloader.ytdlp_extract_info(
-            url, cookiefile=self.ytb_cookies_file
+            url, cookiefile=self.ytb_cookies_file, proxy=self.proxy
         )
         author = await self._fetch_author_info(video_info.channel_id)
 
@@ -82,7 +82,7 @@ class YouTubeParser(BaseParser):
         """获取油管的音频(需加ym前缀)"""
         url = searched.group("url")
         video_info = await self.downloader.ytdlp_extract_info(
-            url, self.ytb_cookies_file
+            url, self.ytb_cookies_file, proxy=self.proxy
         )
         author = await self._fetch_author_info(video_info.channel_id)
 

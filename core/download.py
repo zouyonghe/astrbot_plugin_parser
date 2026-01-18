@@ -67,7 +67,6 @@ class Downloader:
 
     def __init__(self, config: PluginConfig):
         self.cfg = config
-        self.max_duration: int = self.cfg.source_max_minute * 60
         self.max_size = self.cfg.source_max_size
         self.headers: dict[str, str] = COMMON_HEADER.copy()
         # 视频信息缓存
@@ -109,10 +108,6 @@ class Downloader:
             return file_path
 
         headers = {**self.headers, **(ext_headers or {})}
-
-        # Use sentinel value to detect if proxy was explicitly passed
-        if proxy is ...:
-            proxy = self.cfg.proxy
 
         retries = self.cfg.download_retry_times
         for attempt in range(retries + 1):
@@ -371,7 +366,7 @@ class Downloader:
     # region -------------------- 私有：yt-dlp --------------------
 
     async def ytdlp_extract_info(
-        self, url: str, cookiefile: Path | None = None
+        self, url: str, cookiefile: Path | None = None, proxy: str | None = None
     ) -> VideoInfo:
         if (info := self.info_cache.get(url)) is not None:
             return info
@@ -382,8 +377,8 @@ class Downloader:
             "cookiefile": None,
             "http_headers": self.headers,
         }
-        if self.cfg.proxy:
-            opts["proxy"] = self.cfg.proxy
+        if proxy:
+            opts["proxy"] = proxy
         if cookiefile and cookiefile.is_file():
             opts["cookiefile"] = str(cookiefile)
         with yt_dlp.YoutubeDL(opts) as ydl: # type: ignore
@@ -395,10 +390,10 @@ class Downloader:
         return info
 
     async def _ytdlp_download_video(
-        self, url: str, cookiefile: Path | None = None
+        self, url: str, cookiefile: Path | None = None, proxy: str | None = None
     ) -> Path:
         info = await self.ytdlp_extract_info(url, cookiefile)
-        if info.duration > self.max_duration:
+        if info.duration > self.cfg.max_duration:
             raise DurationLimitException
 
         video_path = self.cfg.cache_dir / generate_file_name(url, ".mp4")
@@ -416,8 +411,8 @@ class Downloader:
             "cookiefile": None,
             "http_headers": self.headers,
         }
-        if self.cfg.proxy:
-            opts["proxy"] = self.cfg.proxy
+        if proxy:
+            opts["proxy"] = proxy
         if cookiefile and cookiefile.is_file():
             opts["cookiefile"] = str(cookiefile)
 
@@ -425,7 +420,9 @@ class Downloader:
             await to_thread(ydl.download, [url])
         return video_path
 
-    async def _ytdlp_download_audio(self, url: str, cookiefile: Path | None) -> Path:
+    async def _ytdlp_download_audio(
+        self, url: str, cookiefile: Path | None, proxy: str | None = None
+    ) -> Path:
         file_name = generate_file_name(url)
         audio_path = self.cfg.cache_dir / f"{file_name}.flac"
         if audio_path.exists():
@@ -444,8 +441,8 @@ class Downloader:
             "cookiefile": None,
             "http_headers": self.headers,
         }
-        if self.cfg.proxy:
-            opts["proxy"] = self.cfg.proxy
+        if proxy:
+            opts["proxy"] = proxy
         if cookiefile and cookiefile.is_file():
             opts["cookiefile"] = str(cookiefile)
 
