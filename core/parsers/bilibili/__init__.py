@@ -253,13 +253,13 @@ class BilibiliParser(BaseParser):
         opus = Opus(opus_id, await self.credential)
         return await self._parse_opus_obj(opus)
 
-
     async def parse_read_with_opus(self, read_id: int):
         """解析专栏信息, 使用 Opus 接口
         Args:
             read_id (int): 专栏 id
         """
         from bilibili_api.article import Article
+
         article = Article(read_id)
         return await self._parse_opus_obj(await article.turn_to_opus())
 
@@ -271,6 +271,7 @@ class BilibiliParser(BaseParser):
             ParseResult: 解析结果
         """
         from .opus import ImageNode, OpusItem, TextNode
+
         opus_info = await bili_opus.get_info()
         if not isinstance(opus_info, dict):
             raise ParseException("获取图文动态信息失败")
@@ -283,7 +284,11 @@ class BilibiliParser(BaseParser):
         current_text = ""
         for node in opus_data.gen_text_img():
             if isinstance(node, ImageNode):
-                contents.append(self.create_graphics_content(node.url, current_text.strip(), node.alt))
+                contents.append(
+                    self.create_graphics_content(
+                        node.url, current_text.strip(), node.alt
+                    )
+                )
                 current_text = ""
             elif isinstance(node, TextNode):
                 current_text += node.text
@@ -293,7 +298,8 @@ class BilibiliParser(BaseParser):
             timestamp=opus_data.timestamp,
             contents=contents,
             text=current_text.strip(),
-)
+        )
+
     async def parse_live(self, room_id: int):
         """解析直播信息
 
@@ -336,7 +342,6 @@ class BilibiliParser(BaseParser):
             contents=contents,
             author=author,
         )
-
 
     async def parse_favlist(self, fav_id: int):
         """解析收藏夹信息
