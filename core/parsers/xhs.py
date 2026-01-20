@@ -7,6 +7,7 @@ from msgspec import Struct, convert, field
 from astrbot.api import logger
 
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..download import Downloader
 from .base import BaseParser, ParseException, Platform, handle
 
@@ -36,9 +37,10 @@ class XHSParser(BaseParser):
                 "sec-fetch-dest": "empty",
             }
         )
-        if self.cookies:
-            self.headers["cookie"] = self.cookies
-            self.ios_headers["cookie"] = self.cookies
+        self.cookiejar = CookieJar(config, self.mycfg, domain="xiaohongshu.com")
+        if self.cookiejar.cookies_str:
+            self.headers["cookie"] = self.cookiejar.cookies_str
+            self.ios_headers["cookie"] = self.cookiejar.cookies_str
 
     @handle("xhslink.com", r"xhslink\.com/[A-Za-z0-9._?%&+=/#@-]+")
     async def _parse_short_link(self, searched: re.Match[str]):

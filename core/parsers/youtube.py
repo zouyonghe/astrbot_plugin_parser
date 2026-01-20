@@ -5,9 +5,11 @@ import msgspec
 from aiohttp import ClientError
 from msgspec import Struct
 
+from astrbot.api import logger
+
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..download import Downloader
-from ..utils import save_cookies_with_netscape
 from .base import BaseParser, Platform, handle
 
 
@@ -18,19 +20,10 @@ class YouTubeParser(BaseParser):
     def __init__(self, config: PluginConfig, downloader: Downloader):
         super().__init__(config, downloader)
         self.mycfg = config.parser.youtube
-        if not self.mycfg:
-            raise ValueError("YouTube Parser config not found")
+        if not self.mycfg.cookies:
+            logger.warning("油管Cookie未配置，将无法解析相关媒体")
         self.headers.update({"Referer": "https://www.youtube.com/"})
-        self.ytb_cookies_file = None
-        self._set_cookies()
-
-    def _set_cookies(self):
-        if self.mycfg.cookies:
-            self.ytb_cookies_file = self.data_dir / "ytb_cookies.txt"
-            self.ytb_cookies_file.parent.mkdir(parents=True, exist_ok=True)
-            save_cookies_with_netscape(
-                self.mycfg.cookies, self.ytb_cookies_file, "youtube.com"
-            )
+        self.cookiejar = CookieJar(config, self.mycfg, domain="youtube.com")
 
     @handle("youtu", r"youtu\.be/[A-Za-z\d\._\?%&\+\-=/#]+")
     @handle(
@@ -46,7 +39,7 @@ class YouTubeParser(BaseParser):
 
         video_info = await self.downloader.ytdlp_extract_info(
             url,
-            cookiefile=self.ytb_cookies_file,
+            cookiefile=self.cookiejar.cookie_file,
             headers=self.headers,
             proxy=self.proxy,
         )
@@ -56,11 +49,11 @@ class YouTubeParser(BaseParser):
         if video_info.duration <= self.cfg.max_duration:
             video = self.downloader.ytdlp_download_video(
                 url,
-                cookiefile=self.ytb_cookies_file,
+                cookiefile=self.cookiejar.cookie_file,
                 headers=self.headers,
                 proxy=self.proxy,
                 format="bv*[height<=720]+ba/b[height<=720]",
-                node = True
+                node=True,
             )
             contents.append(
                 self.create_video_content(
@@ -88,7 +81,7 @@ class YouTubeParser(BaseParser):
         url = searched.group("url")
         video_info = await self.downloader.ytdlp_extract_info(
             url,
-            cookiefile=self.ytb_cookies_file,
+            cookiefile=self.cookiejar.cookie_file,
             headers=self.headers,
             proxy=self.proxy,
         )
@@ -100,7 +93,7 @@ class YouTubeParser(BaseParser):
         if video_info.duration <= self.cfg.max_duration:
             audio_task = self.downloader.ytdlp_download_audio(
                 url,
-                cookiefile=self.ytb_cookies_file,
+                cookiefile=self.cookiejar.cookie_file,
                 headers=self.headers,
                 proxy=self.proxy,
             )

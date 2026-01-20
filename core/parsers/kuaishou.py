@@ -6,6 +6,7 @@ import msgspec
 from msgspec import Struct, field
 
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..data import Platform
 from ..download import Downloader
 from .base import BaseParser, ParseException, handle
@@ -21,6 +22,9 @@ class KuaiShouParser(BaseParser):
         super().__init__(config, downloader)
         self.mycfg = config.parser.kuaishou
         self.ios_headers.update({"Referer": "https://v.kuaishou.com/"})
+        self.cookiejar = CookieJar(config, self.mycfg, domain="kuaishou.com")
+        if self.cookiejar.cookies_str:
+            self.ios_headers["cookie"] = self.cookiejar.cookies_str
 
     # https://v.kuaishou.com/2yAnzeZ
     @handle("v.kuaishou", r"v\.kuaishou\.com/[A-Za-z\d._?%&+\-=/#]+")

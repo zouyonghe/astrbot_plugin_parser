@@ -6,6 +6,7 @@ from aiohttp import ClientError
 from bs4 import BeautifulSoup, Tag
 
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..data import ParseResult, Platform
 from ..download import Downloader
 from ..exception import ParseException
@@ -28,6 +29,9 @@ class TwitterParser(BaseParser):
             }
         )
         self.xdown_url = "https://xdown.app/api/ajaxSearch"
+        self.cookiejar = CookieJar(config, self.mycfg, domain="xdown.app")
+        if self.cookiejar.cookies_str:
+            self.headers["cookie"] = self.cookiejar.cookies_str
 
     async def _req_xdown_api(self, url: str) -> dict[str, Any]:
         async with self.session.post(

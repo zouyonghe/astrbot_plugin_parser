@@ -9,6 +9,7 @@ from aiohttp import ClientError
 from bs4 import BeautifulSoup, Tag
 
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..download import Downloader
 from ..exception import ParseException
 from .base import BaseParser, Platform, handle
@@ -32,6 +33,9 @@ class NGAParser(BaseParser):
             }
         )
         self.base_img_url = "https://img.nga.178.com/attachments"
+        self.cookiejar = CookieJar(config, self.mycfg, domain="nga.178.com")
+        if self.cookiejar.cookies_str:
+            self.headers["cookie"] = self.cookiejar.cookies_str
 
     @staticmethod
     def nga_url(tid: str | int) -> str:

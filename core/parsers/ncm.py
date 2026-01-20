@@ -4,6 +4,7 @@ from typing import ClassVar
 from aiohttp import ClientError
 
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..data import Platform
 from ..download import Downloader
 from .base import BaseParser, handle
@@ -18,7 +19,11 @@ class NCMParser(BaseParser):
 
     def __init__(self, config: PluginConfig, downloader: Downloader):
         super().__init__(config, downloader)
+        self.headers.update({"Referer": "https://music.163.com"})
         self.mycfg = config.parser.ncm
+        self.cookiejar = CookieJar(config, self.mycfg, domain="music.163.com")
+        if self.cookiejar.cookies_str:
+            self.headers["cookie"] = self.cookiejar.cookies_str
 
 
     @handle("163cn.tv", r"163cn\.tv/(?P<short_key>\w+)")
