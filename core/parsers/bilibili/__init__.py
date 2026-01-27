@@ -1,11 +1,8 @@
 import asyncio
-import json
-from collections.abc import AsyncGenerator
 from re import Match
 from typing import ClassVar
 
-from bilibili_api import Credential, request_settings, select_client
-from bilibili_api.login_v2 import QrCodeLogin, QrCodeLoginEvents
+from bilibili_api import request_settings, select_client
 from bilibili_api.opus import Opus
 from bilibili_api.video import Video, VideoCodecs, VideoQuality
 from msgspec import convert
@@ -15,13 +12,13 @@ from astrbot.api import logger
 from ...config import PluginConfig
 from ...data import ImageContent, MediaContent, Platform
 from ...exception import DownloadException, DurationLimitException
-from ...utils import ck2dict
 from ..base import (
     BaseParser,
     Downloader,
     ParseException,
     handle,
 )
+from .login import BilibiliLogin
 
 # 选择客户端
 select_client("curl_cffi")
@@ -44,16 +41,14 @@ class BilibiliParser(BaseParser):
             }
         )
 
-        self._credential: Credential | None = None
-
         self.video_quality = getattr(
             VideoQuality, str(self.mycfg.video_quality).upper(), VideoQuality._720P
         )
-        self.codecs = getattr(
+        self.video_codecs = getattr(
             VideoCodecs, str(self.mycfg.video_codecs).upper(), VideoCodecs.AVC
         )
-        self.cookies = self.mycfg.cookies
-        self._cookies_file = self.cfg.data_dir / "bilibili_cookies.json"
+
+        self.login = BilibiliLogin(config)
 
     @handle("b23.tv", r"b23\.tv/[A-Za-z\d\._?%&+\-=/#]+")
     @handle("bili2233", r"bili2233\.cn/[A-Za-z\d\._?%&+\-=/#]+")
@@ -159,7 +154,7 @@ class BilibiliParser(BaseParser):
         page_info = video_info.extract_info_with_page(page_num)
 
         # 获取 AI 总结
-        if self._credential:
+        if self.login._credential:
             cid = await video.get_cid(page_info.index)
             ai_conclusion = await video.get_ai_conclusion(cid)
             ai_conclusion = convert(ai_conclusion, AIConclusion)
@@ -223,7 +218,7 @@ class BilibiliParser(BaseParser):
 
         from .dynamic import DynamicData
 
-        dynamic_ = Dynamic(dynamic_id, await self.credential)
+        dynamic_ = Dynamic(dynamic_id, await self.login.credential)
 
         dynamic_info = convert(await dynamic_.get_info(), DynamicData).item
         author = self.create_author(dynamic_info.name, dynamic_info.avatar)
@@ -250,7 +245,7 @@ class BilibiliParser(BaseParser):
         Args:
             opus_id (int): 图文动态 id
         """
-        opus = Opus(opus_id, await self.credential)
+        opus = Opus(opus_id, await self.login.credential)
         return await self._parse_opus_obj(opus)
 
     async def parse_read_with_opus(self, read_id: int):
@@ -313,7 +308,7 @@ class BilibiliParser(BaseParser):
 
         from .live import RoomData
 
-        room = LiveRoom(room_display_id=room_id, credential=await self.credential)
+        room = LiveRoom(room_display_id=room_id, credential=await self.login.credential)
         info_dict = await room.get_room_info()
 
         room_data = convert(info_dict, RoomData)
@@ -384,9 +379,9 @@ class BilibiliParser(BaseParser):
             avid (int | None): avid
         """
         if avid:
-            return Video(aid=avid, credential=await self.credential)
+            return Video(aid=avid, credential=await self.login.credential)
         elif bvid:
-            return Video(bvid=bvid, credential=await self.credential)
+            return Video(bvid=bvid, credential=await self.login.credential)
         else:
             raise ParseException("avid 和 bvid 至少指定一项")
 
@@ -420,7 +415,7 @@ class BilibiliParser(BaseParser):
         detecter = VideoDownloadURLDataDetecter(download_url_data)
         streams = detecter.detect_best_streams(
             video_max_quality=self.video_quality,
-            codecs=[self.codecs],
+            codecs=[self.video_codecs],
             no_dolby_video=True,
             no_hdr=True,
         )
@@ -437,89 +432,5 @@ class BilibiliParser(BaseParser):
         logger.debug(f"音频流质量: {audio_stream.audio_quality.name}")
         return video_stream.url, audio_stream.url
 
-    def _save_credential(self):
-        """存储哔哩哔哩登录凭证"""
-        if self._credential is None:
-            return
 
-        self._cookies_file.write_text(json.dumps(self._credential.get_cookies()))
 
-    def _load_credential(self):
-        """从文件加载哔哩哔哩登录凭证"""
-        if not self._cookies_file.exists():
-            return
-
-        self._credential = Credential.from_cookies(
-            json.loads(self._cookies_file.read_text())
-        )
-
-    async def login_with_qrcode(self) -> bytes:
-        """通过二维码登录获取哔哩哔哩登录凭证"""
-        self._qr_login = QrCodeLogin()
-        await self._qr_login.generate_qrcode()
-
-        qr_pic = self._qr_login.get_qrcode_picture()
-        return qr_pic.content
-
-    async def check_qr_state(self) -> AsyncGenerator[str, None]:
-        """检查二维码登录状态"""
-        scan_tip_pending = True
-
-        for _ in range(30):
-            state = await self._qr_login.check_state()
-            match state:
-                case QrCodeLoginEvents.DONE:
-                    yield "登录成功"
-                    self._credential = self._qr_login.get_credential()
-                    self._save_credential()
-                    break
-                case QrCodeLoginEvents.CONF:
-                    if scan_tip_pending:
-                        yield "二维码已扫描, 请确认登录"
-                        scan_tip_pending = False
-                case QrCodeLoginEvents.TIMEOUT:
-                    yield "二维码过期, 请重新生成"
-                    break
-            await asyncio.sleep(2)
-        else:
-            yield "二维码登录超时, 请重新生成"
-
-    async def _init_credential(self):
-        """初始化哔哩哔哩登录凭证"""
-        if not self.cookies:
-            self._load_credential()
-            return
-
-        credential = Credential.from_cookies(ck2dict(self.cookies))
-        if await credential.check_valid():
-            logger.info(f"`parser_bili_ck` 有效, 保存到 {self._cookies_file}")
-            self._credential = credential
-            self._save_credential()
-        else:
-            logger.info(f"`parser_bili_ck` 已过期, 尝试从 {self._cookies_file} 加载")
-            self._load_credential()
-
-    @property
-    async def credential(self) -> Credential | None:
-        """哔哩哔哩登录凭证"""
-
-        if self._credential is None:
-            await self._init_credential()
-            return self._credential
-
-        if not await self._credential.check_valid():
-            logger.warning("哔哩哔哩凭证已过期, 请重新配置")
-            return None
-
-        if await self._credential.check_refresh():
-            logger.info("哔哩哔哩凭证需要刷新")
-            if self._credential.has_ac_time_value() and self._credential.has_bili_jct():
-                await self._credential.refresh()
-                logger.info(f"哔哩哔哩凭证刷新成功, 保存到 {self._cookies_file}")
-                self._save_credential()
-            else:
-                logger.warning(
-                    "哔哩哔哩凭证刷新需要包含 `SESSDATA`, `ac_time_value` 项"
-                )
-
-        return self._credential

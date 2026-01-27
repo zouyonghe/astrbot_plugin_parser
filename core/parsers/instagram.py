@@ -13,10 +13,10 @@ import yt_dlp
 from astrbot.api import logger
 
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..data import ImageContent, Platform, VideoContent
 from ..download import Downloader
 from ..exception import ParseException
-from ..utils import save_cookies_with_netscape
 from .base import BaseParser, handle
 
 
@@ -32,94 +32,12 @@ class InstagramParser(BaseParser):
                 "Referer": "https://www.instagram.com/",
             }
         )
-        self.ig_cookies_file: Path | None = None
-        self.ig_cookie_header: str | None = None
-        self._set_cookies()
-
-    def _set_cookies(self) -> None:
-        raw_cookies = self.mycfg.cookies
-        if not raw_cookies:
-            return
-
-        cookie_path = Path(raw_cookies)
-        if cookie_path.is_file():
-            self.ig_cookies_file = cookie_path
-            return
-
-        self.ig_cookie_header = self._cookie_header_from_raw(raw_cookies)
-        cookie_file = self.data_dir / "ig_cookies.txt"
-        cookie_file.parent.mkdir(parents=True, exist_ok=True)
-
-        normalized = self._normalize_netscape(raw_cookies)
-        if normalized:
-            cookie_file.write_text(normalized)
-        else:
-            cookies = raw_cookies.replace("\n", "").replace("\r", "").strip()
-            if not cookies:
-                return
-            save_cookies_with_netscape(cookies, cookie_file, "instagram.com")
-        logger.debug(f"Saved cookies to {cookie_file}")
-
-        self.ig_cookies_file = cookie_file
-
-    @staticmethod
-    def _normalize_netscape(raw_cookies: str) -> str | None:
-        lines: list[str] = []
-        for line in raw_cookies.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            parts = line.split()
-            if len(parts) < 7:
-                continue
-            domain, include_subdomains, path, secure, expires, name = parts[:6]
-            value = " ".join(parts[6:])
-            lines.append(
-                "\t".join(
-                    [
-                        domain,
-                        include_subdomains,
-                        path,
-                        secure,
-                        expires,
-                        name,
-                        value,
-                    ]
-                )
-            )
-        if not lines:
-            return None
-        header = (
-            "# Netscape HTTP Cookie File\n"
-            "# https://curl.haxx.se/rfc/cookie_spec.html\n"
-            "# This is a generated file! Do not edit.\n\n"
-        )
-        return header + "\n".join(lines) + "\n"
-
-    @staticmethod
-    def _cookie_header_from_raw(raw_cookies: str) -> str:
-        raw_cookies = raw_cookies.strip()
-        if not raw_cookies:
-            return ""
-        if raw_cookies.startswith("#") or "\t" in raw_cookies or "\n" in raw_cookies:
-            pairs: list[str] = []
-            for line in raw_cookies.splitlines():
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                parts = line.split()
-                if len(parts) < 7:
-                    continue
-                name = parts[5]
-                value = " ".join(parts[6:])
-                pairs.append(f"{name}={value}")
-            return "; ".join(pairs)
-        return raw_cookies.replace("\n", "").replace("\r", "").strip()
+        self.cookiejar = CookieJar(config, self.mycfg, domain="instagram.com")
 
     async def _gallery_dl_image_urls(self, url: str) -> list[str]:
         cmd = [sys.executable, "-m", "gallery_dl", "-j"]
-        if self.ig_cookies_file and self.ig_cookies_file.is_file():
-            cmd += ["--cookies", str(self.ig_cookies_file)]
+        if self.cookiejar.cookie_file.exists():
+            cmd += ["--cookies", str(self.cookiejar.cookie_file)]
         cmd.append(url)
 
         process = await asyncio.create_subprocess_exec(
@@ -147,11 +65,7 @@ class InstagramParser(BaseParser):
                     if isinstance(message, str):
                         errors.append(message)
                     return
-                if (
-                    len(item) >= 3
-                    and item[0] == 3
-                    and isinstance(item[1], str)
-                ):
+                if len(item) >= 3 and item[0] == 3 and isinstance(item[1], str):
                     urls.append(self._clean_url(item[1]))
                     return
                 if len(item) >= 2 and item[0] == 3 and isinstance(item[1], dict):
@@ -196,16 +110,17 @@ class InstagramParser(BaseParser):
             "skip_download": True,
             "http_headers": {**self.headers, "Referer": "https://www.instagram.com/"},
         }
-        if self.ig_cookie_header:
-            opts["http_headers"]["Cookie"] = self.ig_cookie_header
-        if self.ig_cookies_file and self.ig_cookies_file.is_file():
-            opts["cookiefile"] = str(self.ig_cookies_file)
+        cookie_header = self.cookiejar.get_cookie_header()
+        if cookie_header:
+            opts["http_headers"]["Cookie"] = cookie_header
+        if self.cookiejar.cookie_file.exists():
+            opts["cookiefile"] = str(self.cookiejar.cookie_file)
         for attempt in range(1, max_attempts + 1):
             try:
-                with yt_dlp.YoutubeDL(opts) as ydl: # type: ignore
+                with yt_dlp.YoutubeDL(opts) as ydl:  # type: ignore
                     raw = await asyncio.to_thread(ydl.extract_info, url, download=False)
                 if isinstance(raw, dict):
-                    return raw # type: ignore
+                    return raw  # type: ignore
                 return None
             except Exception as exc:
                 logger.warning(
@@ -217,8 +132,6 @@ class InstagramParser(BaseParser):
             if attempt < max_attempts:
                 await asyncio.sleep(min(2 * attempt, 5))
         return None
-
-
 
     @staticmethod
     def _iter_entries(info: dict[str, Any]) -> list[dict[str, Any]]:
@@ -278,7 +191,9 @@ class InstagramParser(BaseParser):
             return None
         return url
 
-    def _best_video_format(self, formats: list[dict[str, Any]]) -> dict[str, Any] | None:
+    def _best_video_format(
+        self, formats: list[dict[str, Any]]
+    ) -> dict[str, Any] | None:
         candidates: list[dict[str, Any]] = []
         for fmt in formats:
             if not isinstance(fmt, dict):
@@ -297,7 +212,11 @@ class InstagramParser(BaseParser):
 
         def sort_key(fmt: dict[str, Any]) -> tuple[int, int, int]:
             vcodec = fmt.get("vcodec") or ""
-            prefer_avc = 1 if isinstance(vcodec, str) and ("avc" in vcodec or "h264" in vcodec) else 0
+            prefer_avc = (
+                1
+                if isinstance(vcodec, str) and ("avc" in vcodec or "h264" in vcodec)
+                else 0
+            )
             height = fmt.get("height")
             tbr = fmt.get("tbr")
             return (
@@ -309,9 +228,7 @@ class InstagramParser(BaseParser):
         return max(candidates, key=sort_key)
 
     @classmethod
-    def _best_audio_format(
-        cls, formats: list[dict[str, Any]]
-    ) -> dict[str, Any] | None:
+    def _best_audio_format(cls, formats: list[dict[str, Any]]) -> dict[str, Any] | None:
         candidates: list[dict[str, Any]] = []
         for fmt in formats:
             if not isinstance(fmt, dict):
@@ -359,7 +276,11 @@ class InstagramParser(BaseParser):
 
         def sort_key(fmt: dict[str, Any]) -> tuple[int, int, int]:
             vcodec = fmt.get("vcodec") or ""
-            prefer_avc = 1 if isinstance(vcodec, str) and ("avc" in vcodec or "h264" in vcodec) else 0
+            prefer_avc = (
+                1
+                if isinstance(vcodec, str) and ("avc" in vcodec or "h264" in vcodec)
+                else 0
+            )
             height = fmt.get("height")
             tbr = fmt.get("tbr")
             return (
@@ -370,9 +291,7 @@ class InstagramParser(BaseParser):
 
         return max(candidates, key=sort_key)
 
-    def _select_media_urls(
-        self, info: dict[str, Any]
-    ) -> tuple[str | None, str | None]:
+    def _select_media_urls(self, info: dict[str, Any]) -> tuple[str | None, str | None]:
         formats = info.get("formats")
         if isinstance(formats, list) and formats:
             video_fmt = self._best_video_format(formats)
@@ -400,7 +319,6 @@ class InstagramParser(BaseParser):
     def _merged_output_path(self, v_url: str, a_url: str) -> Path:
         digest = hashlib.md5(f"{v_url}|{a_url}".encode()).hexdigest()[:16]
         return self.cfg.cache_dir / f"{digest}.mp4"
-
 
     @handle(
         "instagram.com",
@@ -442,6 +360,7 @@ class InstagramParser(BaseParser):
             try:
                 video_task = await self.downloader.ytdlp_download_video(
                     final_url,
+                    cookiefile=self.cookiejar.cookie_file,
                     headers=self.headers,
                     proxy=self.proxy,
                     format="best[height<=720]/bestvideo[height<=720]+bestaudio/best",
@@ -505,6 +424,7 @@ class InstagramParser(BaseParser):
                     try:
                         video_task = await self.downloader.ytdlp_download_video(
                             final_url,
+                            cookiefile=self.cookiejar.cookie_file,
                             headers=self.headers,
                             proxy=self.proxy,
                             format="best[height<=720]/bestvideo[height<=720]+bestaudio/best",
@@ -527,6 +447,7 @@ class InstagramParser(BaseParser):
                     if isinstance(fallback_url, str) and fallback_url:
                         video_task = await self.downloader.ytdlp_download_video(
                             fallback_url,
+                            cookiefile=self.cookiejar.cookie_file,
                             headers=self.headers,
                             proxy=self.proxy,
                             format="best[height<=720]/bestvideo[height<=720]+bestaudio/best",

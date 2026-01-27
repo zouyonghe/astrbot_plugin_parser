@@ -2,6 +2,7 @@ import re
 from typing import ClassVar
 
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..data import Author, Platform, VideoContent
 from ..download import Downloader
 from .base import BaseParser, handle
@@ -17,6 +18,7 @@ class TikTokParser(BaseParser):
             {"Origin": "https://www.tiktok.com", "Referer": "https://www.tiktok.com/"}
         )
         self.mycfg = config.parser.tiktok
+        self.cookiejar = CookieJar(config, self.mycfg, "tiktok.com")
 
     @handle("tiktok.com", r"(www|vt|vm)\.tiktok\.com/[A-Za-z0-9._?%&+\-=/#@]*")
     async def _parse(self, searched: re.Match[str]):
@@ -36,7 +38,11 @@ class TikTokParser(BaseParser):
             url=video_info.thumbnail, headers=self.headers, proxy=self.proxy
         )
         video = self.downloader.ytdlp_download_video(
-            url, headers=self.headers, proxy=self.proxy, format="best"
+            url,
+            cookiefile=self.cookiejar.cookie_file,
+            headers=self.headers,
+            proxy=self.proxy,
+            format="best",
         )
 
         return self.result(

@@ -272,6 +272,12 @@
                         "type": "bool",
                         "default": true
                     },
+                    "cookies": {
+                        "description": "Tiktok Cookies",
+                        "hint": "选填",
+                        "type": "text",
+                        "default": ""
+                    },
                     "use_proxy": {
                         "description": "使用代理",
                         "type": "bool",
@@ -329,6 +335,12 @@
                         "type": "bool",
                         "default": true
                     },
+                    "cookies": {
+                        "description": "X Cookies",
+                        "hint": "选填",
+                        "type": "text",
+                        "default": ""
+                    },
                     "use_proxy": {
                         "description": "使用代理",
                         "type": "bool",
@@ -343,6 +355,12 @@
                         "description": "启用",
                         "type": "bool",
                         "default": true
+                    },
+                    "cookies": {
+                        "description": "Acfun Cookies",
+                        "hint": "选填",
+                        "type": "text",
+                        "default": ""
                     },
                     "use_proxy": {
                         "description": "使用代理",
@@ -359,6 +377,12 @@
                         "type": "bool",
                         "default": true
                     },
+                    "cookies": {
+                        "description": "网易云 Cookies",
+                        "hint": "选填",
+                        "type": "text",
+                        "default": ""
+                    },
                     "use_proxy": {
                         "description": "使用代理",
                         "type": "bool",
@@ -373,6 +397,12 @@
                         "description": "启用",
                         "type": "bool",
                         "default": true
+                    },
+                    "cookies": {
+                        "description": "NGA Cookies",
+                        "hint": "选填",
+                        "type": "text",
+                        "default": ""
                     },
                     "use_proxy": {
                         "description": "使用代理",

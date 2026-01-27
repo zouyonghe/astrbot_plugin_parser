@@ -10,8 +10,6 @@ from astrbot.core.config.astrbot_config import AstrBotConfig
 from astrbot.core.star.context import Context
 from astrbot.core.star.star_tools import StarTools
 
-# ================ 通用基础设施 ==================
-
 
 class ConfigNode:
     """
@@ -26,8 +24,6 @@ class ConfigNode:
 
     _SCHEMA_CACHE: dict[type, dict[str, type]] = {}
     _FIELDS_CACHE: dict[type, set[str]] = {}
-
-    # ---------- schema ----------
 
     @classmethod
     def _schema(cls) -> dict[str, type]:
@@ -157,6 +153,9 @@ class ParserItem(ConfigNode):
     video_codecs: str | None
     video_quality: str | None
 
+    @property
+    def name(self) -> str:
+        return self._data.get("__template_key")
 
 class ParserConfig(ConfigNodeContainer):
     acfun: ParserItem
@@ -219,6 +218,9 @@ class PluginConfig(ConfigNode):
         self.data_dir = StarTools.get_data_dir("astrbot_plugin_parser")
         self.cache_dir = self.data_dir / "cache"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cookie_dir = self.data_dir / "cookies"
+        self.cookie_dir.mkdir(parents=True, exist_ok=True)
+
 
         # ---------- 派生字段 ----------
         self.proxy = self.proxy or None

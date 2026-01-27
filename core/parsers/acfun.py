@@ -11,6 +11,7 @@ from aiohttp import ClientError
 from astrbot.api import logger
 
 from ..config import PluginConfig
+from ..cookie import CookieJar
 from ..download import Downloader
 from ..exception import DownloadException, ParseException
 from ..utils import safe_unlink
@@ -25,6 +26,9 @@ class AcfunParser(BaseParser):
         super().__init__(config, downloader)
         self.mycfg = config.parser.acfun
         self.headers.update({"referer": "https://www.acfun.cn/"})
+        self.cookiejar = CookieJar(config, self.mycfg, domain="acfun.cn")
+        if self.cookiejar.cookies_str:
+            self.headers["cookie"] = self.cookiejar.cookies_str
 
     @handle("acfun.cn", r"(?:ac=|/ac)(?P<acid>\d+)")
     async def _parse(self, searched: re.Match[str]):
